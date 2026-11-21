@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MT App Launcher</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #4ea1ff;
+    --accent-2: #2b7de0;
+    --good: #3ecf8e;
+    --warn: #f5b84b;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5;
+    background: rgba(15,17,21,.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px 14px;
+  }
+  .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--accent); }
+  .status { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .status.warn { color: var(--warn); }
+  button {
+    font: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    padding: 6px 12px; border-radius: 8px;
+  }
+  button:hover { border-color: var(--accent); }
+  .search-wrap { max-width: 1200px; margin: 12px auto 0; }
+  #search {
+    width: 100%; font: inherit; font-size: 15px;
+    padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .card-head { display: flex; align-items: flex-start; gap: 10px; }
+  .card-title { font-size: 17px; font-weight: 650; margin: 0; }
+  .card-sub { color: var(--muted); font-size: 12px; }
+  .desc { color: var(--muted); font-size: 13px; margin: 0; }
+  .gh-link { margin-left: auto; color: var(--muted); font-size: 12px; text-decoration: none; white-space: nowrap; }
+  .gh-link:hover { color: var(--accent); }
+  ul.pages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  ul.pages li {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-2); border: 1px solid transparent; border-radius: 8px; padding: 8px 10px;
+  }
+  ul.pages li:hover { border-color: var(--border); }
+  ul.pages a.page { color: var(--text); text-decoration: none; flex: 1; min-width: 0; }
+  ul.pages a.page:hover .label { color: var(--accent); }
+  .label { font-size: 14px; font-weight: 550; display: block; }
+  .path { font-size: 11.5px; color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .main-tag { font-size: 10.5px; color: var(--good); border: 1px solid var(--good); border-radius: 999px; padding: 0 6px; margin-left: 6px; vertical-align: 1px; }
+  .copy { padding: 4px 9px; font-size: 12px; flex-shrink: 0; }
+  .copy.done { border-color: var(--good); color: var(--good); }
+  .err { color: var(--warn); font-size: 12.5px; }
+  h2.section { font-size: 14px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 32px 0 12px; font-weight: 600; }
+  .other { display: flex; flex-wrap: wrap; gap: 8px; }
+  .other a {
+    color: var(--muted); text-decoration: none; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; background: var(--panel);
+  }
+  .other a:hover { color: var(--accent); border-color: var(--accent); }
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+  .hidden { display: none !important; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px 20px 40px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1><span>MT</span> App Launcher</h1>
+    <span id="status" class="status">Loading…</span>
+    <button id="refresh" title="Re-scan GitHub now">Refresh</button>
+  </div>
+  <div class="search-wrap">
+    <input id="search" type="search" placeholder="Search apps and pages…" autocomplete="off">
+  </div>
+</header>
+
+<main>
+  <div id="grid" class="grid"></div>
+  <div id="extra"></div>
+  <div id="other"></div>
+</main>
+<footer>Links are pulled automatically from github.com/<span id="owner-name"></span>. Push a new page and it shows up here on the next refresh.</footer>
+
+<script>
+/* ============================================================
+   SETTINGS — the only part you should ever need to edit
+   ============================================================ */
+const CONFIG = {
+  owner: 'mountytechWV',          // GitHub username to scan
+  hideRepos: ['launcher'],        // repo names to leave out (this launcher itself, etc.)
+  hideFiles: [                    // pages to leave out (matched against the path inside the site)
+    /^404\.html?$/i,
+    /(^|\/)(node_modules|vendor|test|tests|drafts?)\//i,
+    /(^|\/)[._]/,                 // dot-files and _folders (Jekyll ignores these anyway)
+    /\.test\.html?$/i,
+  ],
+  includeForks: false,
+  includeArchived: false,
+  showOtherRepos: true,           // list repos that have no website at the bottom
+  cacheMinutes: 30,               // how long before it quietly re-checks GitHub
+  fetchTitles: true,              // read each page's <title> for nicer names
+  linksFile: 'links.json',        // optional extra links (see README)
+};
+/* ============================================================ */
+
+const API = 'https://api.github.com';
+const CACHE_KEY = 'mt-launcher-cache-v1';
+const $ = (id) => document.getElementById(id);
+const ownerLower = CONFIG.owner.toLowerCase();
+$('owner-name').textContent = CONFIG.owner;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function pretty(name) {
+  return String(name)
+    .replace(/\.html?$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+function timeAgo(iso) {
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (d < 3600) return Math.max(1, Math.round(d / 60)) + 'm ago';
+  if (d < 86400) return Math.round(d / 3600) + 'h ago';
+  if (d < 86400 * 30) return Math.round(d / 86400) + 'd ago';
+  return new Date(iso).toLocaleDateString();
+}
+function setStatus(text, warn) {
+  const el = $('status');
+  el.textContent = text;
+  el.classList.toggle('warn', !!warn);
+}
+
+function readCache() {
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; }
+}
+function writeCache(data) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ time: Date.now(), data })); } catch {}
+}
+
+class RateLimitError extends Error {}
+
+async function gh(path) {
+  const r = await fetch(API + path, { headers: { Accept: 'application/vnd.github+json' } });
+  if ((r.status === 403 || r.status === 429) && r.headers.get('x-ratelimit-remaining') === '0') {
+    const reset = Number(r.headers.get('x-ratelimit-reset')) * 1000;
+    const e = new RateLimitError('rate limited');
+    e.reset = reset;
+    throw e;
+  }
+  if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+
+async function pool(items, size, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+async function listRepos() {
+  let all = [], page = 1;
+  while (true) {
+    const batch = await gh(`/users/${CONFIG.owner}/repos?per_page=100&page=${page}&sort=pushed`);
+    all = all.concat(batch);
+    if (batch.length < 100) break;
+    page++;
+  }
+  return all.filter(r =>
+    !CONFIG.hideRepos.map(s => s.toLowerCase()).includes(r.name.toLowerCase()) &&
+    (CONFIG.includeForks || !r.fork) &&
+    (CONFIG.includeArchived || !r.archived)
+  );
+}
+
+function defaultPagesUrl(repo) {
+  return repo.name.toLowerCase() === `${ownerLower}.github.io`
+    ? `https://${ownerLower}.github.io/`
+    : `https://${ownerLower}.github.io/${repo.name}/`;
+}
+
+async function scanRepo(repo) {
+  const result = {
+    name: repo.name,
+    description: repo.description || '',
+    repoUrl: repo.html_url,
+    pushed: repo.pushed_at,
+    homepage: repo.homepage || '',
+    hasPages: !!repo.has_pages,
+    base: '',
+    pages: [],
+    error: '',
+  };
+  if (!repo.has_pages) return result;
+
+  let branch = null, dir = null;
+  try {
+    const p = await gh(`/repos/${repo.full_name}/pages`);
+    result.base = p.html_url;
+    if (p.source) { branch = p.source.branch; dir = (p.source.path || '/').replace(/^\/+|\/+$/g, ''); }
+  } catch (e) {
+    if (e instanceof RateLimitError) throw e;
+    // Pages info isn't always public. Work it out from the branches instead.
+  }
+  if (!result.base) result.base = defaultPagesUrl(repo);
+  if (!result.base.endsWith('/')) result.base += '/';
+
+  if (!branch) {
+    try {
+      const branches = await gh(`/repos/${repo.full_name}/branches?per_page=100`);
+      branch = branches.some(b => b.name === 'gh-pages') ? 'gh-pages' : repo.default_branch;
+    } catch (e) {
+      if (e instanceof RateLimitError) throw e;
+      branch = repo.default_branch;
+    }
+  }
+
+  try {
+    const tree = await gh(`/repos/${repo.full_name}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+    let html = tree.tree.filter(n => n.type === 'blob' && /\.html?$/i.test(n.path)).map(n => n.path);
+
+    if (dir === null) {
+      // Unknown publish folder: use root, unless the site clearly lives in /docs
+      const rootHas = html.some(p => !p.includes('/') || !p.startsWith('docs/'));
+      dir = (!rootHas && html.some(p => p.startsWith('docs/'))) ? 'docs' : '';
+      if (html.some(p => /^index\.html?$/i.test(p))) dir = '';
+      else if (html.some(p => /^docs\/index\.html?$/i.test(p))) dir = 'docs';
+    }
+    if (dir) html = html.filter(p => p.startsWith(dir + '/')).map(p => p.slice(dir.length + 1));
+
+    html = html.filter(p => !CONFIG.hideFiles.some(rx => rx.test(p)));
+
+    result.pages = html.map(p => {
+      const isIndex = /(^|\/)index\.html?$/i.test(p);
+      const urlPath = isIndex ? p.replace(/index\.html?$/i, '') : p;
+      const folder = urlPath.replace(/\/$/, '').split('/').pop();
+      return {
+        path: urlPath || '/',
+        url: result.base + urlPath,
+        isMain: urlPath === '',
+        label: urlPath === '' ? 'Main app' : pretty(isIndex ? folder : p.split('/').pop()),
+        title: '',
+      };
+    }).sort((a, b) => (b.isMain - a.isMain) || a.path.localeCompare(b.path));
+  } catch (e) {
+    if (e instanceof RateLimitError) throw e;
+    result.error = 'Could not read the file list for this repo.';
+  }
+
+  if (!result.pages.length && !result.error) {
+    result.pages = [{ path: '/', url: result.base, isMain: true, label: 'Main app', title: '' }];
+  }
+  return result;
+}
+
+async function addTitles(apps, oldData) {
+  if (!CONFIG.fetchTitles) return;
+  const known = new Map();
+  (oldData || []).forEach(a => a.pages.forEach(p => p.title && known.set(p.url, p.title)));
+  const all = apps.flatMap(a => a.pages);
+  await pool(all, 6, async (p) => {
+    if (known.has(p.url)) { p.title = known.get(p.url); return; }
+    try {
+      const r = await fetch(p.url, { cache: 'no-cache' });
+      if (!r.ok) return;
+      const text = await r.text();
+      const m = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (m) {
+        const t = new DOMParser().parseFromString(m[1], 'text/html').documentElement.textContent.trim();
+        if (t) p.title = t;
+      }
+    } catch { /* other domains may block this; the filename label is used instead */ }
+  });
+}
+
+async function loadExtraLinks() {
+  try {
+    const r = await fetch(CONFIG.linksFile, { cache: 'no-cache' });
+    if (!r.ok) return [];
+    const list = await r.json();
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+
+async function scanAll(oldData) {
+  setStatus('Checking GitHub…');
+  const repos = await listRepos();
+  const apps = await pool(repos, 4, scanRepo);
+  await addTitles(apps.filter(a => a.hasPages), oldData);
+  return apps;
+}
+
+/* ---------- Rendering ---------- */
+
+let EXTRA = [];
+
+function pageRow(p) {
+  const name = p.title || p.label;
+  const showFile = p.title && p.title !== p.label;
+  return `
+    <li data-search="${esc((name + ' ' + p.label + ' ' + p.path).toLowerCase())}">
+      <a class="page" href="${esc(p.url)}" target="_blank" rel="noopener">
+        <span class="label">${esc(name)}${p.isMain ? '<span class="main-tag">main</span>' : ''}</span>
+        <span class="path">${esc(p.path === '/' ? p.url : p.path)}</span>
+      </a>
+      <button class="copy" data-url="${esc(p.url)}">Copy</button>
+    </li>`;
+}
+
+function render(apps) {
+  const withSites = apps.filter(a => a.hasPages || (a.homepage && /^https?:/i.test(a.homepage)));
+  const others = apps.filter(a => !withSites.includes(a));
+
+  const grid = $('grid');
+  if (!withSites.length && !EXTRA.length) {
+    grid.innerHTML = '<div class="empty">No GitHub Pages sites found yet.</div>';
+  } else {
+    grid.innerHTML = withSites.map(a => {
+      let pages = a.pages.slice();
+      if (!a.hasPages && a.homepage) {
+        pages = [{ path: a.homepage, url: a.homepage, isMain: true, label: 'Main app', title: '' }];
+      } else if (a.homepage && /^https?:/i.test(a.homepage) && !pages.some(p => p.url.replace(/\/$/, '') === a.homepage.replace(/\/$/, ''))) {
+        pages.push({ path: a.homepage, url: a.homepage, isMain: false, label: 'Homepage', title: '' });
+      }
+      const search = (a.name + ' ' + pretty(a.name) + ' ' + a.description).toLowerCase();
+      return `
+        <section class="card" data-search="${esc(search)}">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${esc(pretty(a.name))}</h3>
+              <div class="card-sub">${pages.length} page${pages.length === 1 ? '' : 's'} · updated ${esc(timeAgo(a.pushed))}</div>
+            </div>
+            <a class="gh-link" href="${esc(a.repoUrl)}" target="_blank" rel="noopener">GitHub ↗</a>
+          </div>
+          ${a.description ? `<p class="desc">${esc(a.description)}</p>` : ''}
+          <ul class="pages">${pages.map(pageRow).join('')}</ul>
+          ${a.error ? `<div class="err">${esc(a.error)}</div>` : ''}
+        </section>`;
+    }).join('');
+  }
+
+  // Extra links from links.json, grouped
+  const groups = {};
+  EXTRA.forEach(l => { const g = l.group || 'Other links'; (groups[g] = groups[g] || []).push(l); });
+  $('extra').innerHTML = Object.entries(groups).map(([g, links]) => `
+    <h2 class="section">${esc(g)}</h2>
+    <div class="grid"><section class="card" data-search="${esc(g.toLowerCase())}">
+      <ul class="pages">${links.map(l => pageRow({
+        url: l.url, path: l.note || l.url, label: l.name || l.url, title: '', isMain: false,
+      })).join('')}</ul>
+    </section></div>`).join('');
+
+  $('other').innerHTML = (CONFIG.showOtherRepos && others.length) ? `
+    <h2 class="section">Repos without a website</h2>
+    <div class="other">${others.map(a => `<a href="${esc(a.repoUrl)}" target="_blank" rel="noopener" data-search="${esc(a.name.toLowerCase())}">${esc(a.name)}</a>`).join('')}</div>` : '';
+
+  applySearch();
+}
+
+function applySearch() {
+  const q = $('search').value.trim().toLowerCase();
+  document.querySelectorAll('.card').forEach(card => {
+    const cardHit = !q || card.dataset.search.includes(q);
+    let anyRow = false;
+    card.querySelectorAll('li').forEach(li => {
+      const hit = !q || cardHit || li.dataset.search.includes(q);
+      li.classList.toggle('hidden', !hit);
+      if (hit) anyRow = true;
+    });
+    card.classList.toggle('hidden', !(cardHit || anyRow));
+  });
+  document.querySelectorAll('.other a').forEach(a => a.classList.toggle('hidden', !!q && !a.dataset.search.includes(q)));
+}
+
+/* ---------- Wiring ---------- */
+
+$('search').addEventListener('input', applySearch);
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement !== $('search')) { e.preventDefault(); $('search').focus(); }
+});
+
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('.copy');
+  if (!btn) return;
+  const url = btn.dataset.url;
+  try { await navigator.clipboard.writeText(url); }
+  catch {
+    const t = document.createElement('textarea');
+    t.value = url; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } catch {}
+    t.remove();
+  }
+  btn.textContent = 'Copied'; btn.classList.add('done');
+  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1400);
+});
+
+async function refresh(force) {
+  const cache = readCache();
+  const fresh = cache && (Date.now() - cache.time) < CONFIG.cacheMinutes * 60000;
+  if (cache) render(cache.data);
+  if (fresh && !force) {
+    setStatus('Updated ' + timeAgo(new Date(cache.time).toISOString()));
+    return;
+  }
+  try {
+    const data = await scanAll(cache && cache.data);
+    writeCache(data);
+    render(data);
+    setStatus('Updated just now');
+  } catch (e) {
+    if (e instanceof RateLimitError) {
+      const when = e.reset ? new Date(e.reset).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'soon';
+      setStatus(`GitHub limit reached, showing saved list. Try again after ${when}.`, true);
+    } else {
+      setStatus(cache ? 'Couldn’t reach GitHub, showing saved list.' : 'Couldn’t reach GitHub.', true);
+      if (!cache) $('grid').innerHTML = '<div class="empty">Couldn’t load your repos. Check your connection and hit Refresh.</div>';
+    }
+  }
+}
+
+$('refresh').addEventListener('click', () => refresh(true));
+
+(async () => {
+  EXTRA = await loadExtraLinks();
+  refresh(false);
+})();
+</script>
+</body>
+</html>
