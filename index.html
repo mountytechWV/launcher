@@ -86,6 +86,16 @@
   }
   .other a:hover { color: var(--accent); border-color: var(--accent); }
   .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+  .tagline { max-width: 1200px; margin: 6px auto 0; color: var(--muted); font-size: 14px; }
+  .showcase-desc { white-space: pre-line; color: #b9c0cc; font-size: 14px; flex: 1; }
+  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--accent-2); color: #fff; text-decoration: none; font-weight: 600; font-size: 14px;
+    padding: 8px 16px; border-radius: 8px; border: 1px solid var(--accent-2);
+  }
+  .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+  .actions .gh-link { margin-left: auto; }
+  .also { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; margin-top: 4px; }
   .hidden { display: none !important; }
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px 20px 40px; }
 </style>
@@ -93,10 +103,11 @@
 <body>
 <header>
   <div class="top">
-    <h1><span>MT</span> App Launcher</h1>
+    <h1><span>MT</span> <span id="page-title" style="color:inherit">App Launcher</span></h1>
     <span id="status" class="status">Loading…</span>
     <button id="refresh" title="Re-scan GitHub now">Refresh</button>
   </div>
+  <p id="tagline" class="tagline hidden"></p>
   <div class="search-wrap">
     <input id="search" type="search" placeholder="Search apps and pages…" autocomplete="off">
   </div>
@@ -107,15 +118,20 @@
   <div id="extra"></div>
   <div id="other"></div>
 </main>
-<footer>Links are pulled automatically from github.com/<span id="owner-name"></span>. Push a new page and it shows up here on the next refresh.</footer>
+<footer id="foot">Links are pulled automatically from github.com/<span id="owner-name"></span>. Push a new page and it shows up here on the next refresh.</footer>
 
 <script>
 /* ============================================================
    SETTINGS — the only part you should ever need to edit
    ============================================================ */
 const CONFIG = {
+  mode: 'personal',               // 'personal' = everything (your own dashboard)
+                                  // 'showcase' = only apps whose launcher.json has a "showcase" section
+  title: 'App Launcher',          // page heading (shown after "MT")
+  tagline: '',                    // optional line under the heading
+  categoryOrder: ['Trading Tools', 'Everyday'], // showcase: which category sections come first
   owner: 'mountytechWV',          // GitHub username to scan
-  hideRepos: ['launcher'],        // repo names to leave out (this launcher itself, etc.)
+  hideRepos: ['launcher', 'apps'],// repo names to leave out (the launcher and showcase repos themselves)
   hideFiles: [                    // pages to leave out (matched against the path inside the site)
     /^404\.html?$/i,
     /(^|\/)(node_modules|vendor|test|tests|drafts?)\//i,
@@ -132,10 +148,18 @@ const CONFIG = {
 /* ============================================================ */
 
 const API = 'https://api.github.com';
-const CACHE_KEY = 'mt-launcher-cache-v2';
+const SHOWCASE = CONFIG.mode === 'showcase';
+const CACHE_KEY = 'mt-launcher-cache-v3-' + CONFIG.mode; // separate per mode: both pages share one domain
 const $ = (id) => document.getElementById(id);
 const ownerLower = CONFIG.owner.toLowerCase();
 $('owner-name').textContent = CONFIG.owner;
+$('page-title').textContent = CONFIG.title;
+document.title = 'MT ' + CONFIG.title;
+if (CONFIG.tagline) { $('tagline').textContent = CONFIG.tagline; $('tagline').classList.remove('hidden'); }
+if (SHOWCASE) {
+  $('foot').innerHTML = 'Made by MountyTech. Everything here is free to use: click <b>Open app</b> to try it.';
+  $('search').placeholder = 'Search apps…';
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -226,7 +250,10 @@ async function readRepoLauncherFile(repo) {
 
 async function scanRepo(repo) {
   const extra = await readRepoLauncherFile(repo);
+  const hasShowcase = extra.showcase && typeof extra.showcase === 'object';
+  if (SHOWCASE && !hasShowcase) return null;
   const result = await scanRepoPages(repo);
+  result.showcase = hasShowcase ? extra.showcase : null;
   result.displayName = typeof extra.name === 'string' ? extra.name : '';
   result.links = (Array.isArray(extra.links) ? extra.links : [])
     .filter(l => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url));
@@ -341,8 +368,8 @@ async function loadExtraLinks() {
 async function scanAll(oldData) {
   setStatus('Checking GitHub…');
   const repos = await listRepos();
-  const apps = await pool(repos, 4, scanRepo);
-  await addTitles(apps.filter(a => a.hasPages), oldData);
+  const apps = (await pool(repos, 4, scanRepo)).filter(Boolean);
+  if (!SHOWCASE) await addTitles(apps.filter(a => a.hasPages), oldData);
   return apps;
 }
 
@@ -363,7 +390,77 @@ function pageRow(p) {
     </li>`;
 }
 
+function renderShowcase(apps) {
+  const isUrl = u => typeof u === 'string' && /^https?:\/\//i.test(u);
+  const items = apps.map(a => {
+    const s = a.showcase || {};
+    const main = (isUrl(s.url) && s.url)
+      || (isUrl(a.homepage) && a.homepage)
+      || (a.hasPages && a.base)
+      || ((a.links.find(l => l.main) || {}).url) || '';
+    return {
+      name: s.name || a.displayName || pretty(a.name),
+      desc: s.description || a.description || '',
+      category: s.category || 'Apps',
+      order: Number.isFinite(Number(s.order)) ? Number(s.order) : 999,
+      main,
+      links: (Array.isArray(s.links) ? s.links : []).filter(l => l && isUrl(l.url)),
+      repoUrl: a.repoUrl,
+      showSource: s.showSource !== false,
+    };
+  }).filter(i => i.main || i.links.length);
+
+  const grid = $('grid');
+  grid.className = '';
+  if (!items.length) {
+    grid.innerHTML = '<div class="empty">Nothing here yet.</div>';
+  } else {
+    const groups = {};
+    items.forEach(i => (groups[i.category] = groups[i.category] || []).push(i));
+    const rank = c => { const k = CONFIG.categoryOrder.indexOf(c); return k < 0 ? 999 : k; };
+    const ordered = Object.entries(groups).sort((x, y) => (rank(x[0]) - rank(y[0])) || x[0].localeCompare(y[0]));
+    grid.innerHTML = ordered.map(([cat, list]) => {
+      list.sort((x, y) => (x.order - y.order) || x.name.localeCompare(y.name));
+      return `
+        ${Object.keys(groups).length > 1 ? `<h2 class="section">${esc(cat)}</h2>` : ''}
+        <div class="grid">${list.map(i => `
+          <section class="card" data-search="${esc((i.name + ' ' + i.desc + ' ' + i.category).toLowerCase())}">
+            <h3 class="card-title">${esc(i.name)}</h3>
+            ${i.desc ? `<p class="desc showcase-desc">${esc(i.desc)}</p>` : ''}
+            ${i.main ? `
+            <div class="actions">
+              <a class="btn-primary" href="${esc(i.main)}" target="_blank" rel="noopener">Open app</a>
+              <button class="copy" data-url="${esc(i.main)}">Copy link</button>
+              ${i.showSource ? `<a class="gh-link" href="${esc(i.repoUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}
+            </div>` : ''}
+            ${i.links.length ? `
+            <div class="also">Also available</div>
+            <ul class="pages">${i.links.map(l => pageRow({ url: l.url, path: l.note || l.url, label: l.name || l.url, title: '', isMain: false })).join('')}</ul>` : ''}
+          </section>`).join('')}
+        </div>`;
+    }).join('');
+  }
+  renderExtras();
+  $('other').innerHTML = '';
+  applySearch();
+}
+
+function renderExtras() {
+  const groups = {};
+  EXTRA.filter(l => l && l.url && !/example\.com/i.test(l.url))
+    .forEach(l => { const g = l.group || 'Other links'; (groups[g] = groups[g] || []).push(l); });
+  $('extra').innerHTML = Object.entries(groups).map(([g, links]) => `
+    <h2 class="section">${esc(g)}</h2>
+    <div class="grid"><section class="card" data-search="${esc(g.toLowerCase())}">
+      <ul class="pages">${links.map(l => pageRow({
+        url: l.url, path: l.note || l.url, label: l.name || l.url, title: '', isMain: false,
+      })).join('')}</ul>
+    </section></div>`).join('');
+}
+
 function render(apps) {
+  if (SHOWCASE) return renderShowcase(apps);
+  $('grid').className = 'grid';
   const withSites = apps.filter(a => a.hasPages || (a.homepage && /^https?:/i.test(a.homepage)) || (a.links && a.links.length));
   const others = apps.filter(a => !withSites.includes(a));
 
@@ -402,16 +499,7 @@ function render(apps) {
     }).join('');
   }
 
-  // Extra links from links.json, grouped
-  const groups = {};
-  EXTRA.forEach(l => { const g = l.group || 'Other links'; (groups[g] = groups[g] || []).push(l); });
-  $('extra').innerHTML = Object.entries(groups).map(([g, links]) => `
-    <h2 class="section">${esc(g)}</h2>
-    <div class="grid"><section class="card" data-search="${esc(g.toLowerCase())}">
-      <ul class="pages">${links.map(l => pageRow({
-        url: l.url, path: l.note || l.url, label: l.name || l.url, title: '', isMain: false,
-      })).join('')}</ul>
-    </section></div>`).join('');
+  renderExtras();
 
   $('other').innerHTML = (CONFIG.showOtherRepos && others.length) ? `
     <h2 class="section">Repos without a website</h2>
@@ -453,8 +541,9 @@ document.addEventListener('click', async e => {
     try { document.execCommand('copy'); } catch {}
     t.remove();
   }
+  const orig = btn.dataset.orig || (btn.dataset.orig = btn.textContent);
   btn.textContent = 'Copied'; btn.classList.add('done');
-  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1400);
+  setTimeout(() => { btn.textContent = orig; btn.classList.remove('done'); }, 1400);
 });
 
 async function refresh(force) {
