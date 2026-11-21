@@ -276,31 +276,32 @@ async function scanRepoPages(repo) {
   };
   if (!repo.has_pages) return result;
 
-  let branch = null, dir = null;
-  try {
-    const p = await gh(`/repos/${repo.full_name}/pages`);
-    result.base = p.html_url;
-    if (p.source) { branch = p.source.branch; dir = (p.source.path || '/').replace(/^\/+|\/+$/g, ''); }
-  } catch (e) {
-    if (e instanceof RateLimitError) throw e;
-    // Pages info isn't always public. Work it out from the branches instead.
+  result.base = defaultPagesUrl(repo);
+  if (SHOWCASE) {
+    // The showcase only needs the main link, so skip the file scan (saves GitHub checks).
+    result.pages = [{ path: '/', url: result.base, isMain: true, label: 'Main app', title: '' }];
+    return result;
   }
-  if (!result.base) result.base = defaultPagesUrl(repo);
-  if (!result.base.endsWith('/')) result.base += '/';
 
-  if (!branch) {
+  let dir = null;
+  const htmlFiles = async (branch) => {
     try {
-      const branches = await gh(`/repos/${repo.full_name}/branches?per_page=100`);
-      branch = branches.some(b => b.name === 'gh-pages') ? 'gh-pages' : repo.default_branch;
+      const t = await gh(`/repos/${repo.full_name}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+      return t.tree.filter(n => n.type === 'blob' && /\.html?$/i.test(n.path)).map(n => n.path);
     } catch (e) {
       if (e instanceof RateLimitError) throw e;
-      branch = repo.default_branch;
+      return null;
     }
-  }
+  };
 
   try {
-    const tree = await gh(`/repos/${repo.full_name}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
-    let html = tree.tree.filter(n => n.type === 'blob' && /\.html?$/i.test(n.path)).map(n => n.path);
+    // One check per repo: read the main branch. Only look at a gh-pages branch if main has no pages.
+    let html = await htmlFiles(repo.default_branch);
+    if (!html || !html.length) {
+      const alt = repo.default_branch === 'gh-pages' ? null : await htmlFiles('gh-pages');
+      if (alt && alt.length) html = alt;
+    }
+    if (!html) throw new Error('no tree');
 
     if (dir === null) {
       // Unknown publish folder: use root, unless the site clearly lives in /docs
@@ -407,6 +408,7 @@ function renderShowcase(apps) {
       links: (Array.isArray(s.links) ? s.links : []).filter(l => l && isUrl(l.url)),
       repoUrl: a.repoUrl,
       showSource: s.showSource !== false,
+      button: (typeof s.buttonText === 'string' && s.buttonText.trim()) || 'Open app',
     };
   }).filter(i => i.main || i.links.length);
 
@@ -429,7 +431,7 @@ function renderShowcase(apps) {
             ${i.desc ? `<p class="desc showcase-desc">${esc(i.desc)}</p>` : ''}
             ${i.main ? `
             <div class="actions">
-              <a class="btn-primary" href="${esc(i.main)}" target="_blank" rel="noopener">Open app</a>
+              <a class="btn-primary" href="${esc(i.main)}" target="_blank" rel="noopener">${esc(i.button)}</a>
               <button class="copy" data-url="${esc(i.main)}">Copy link</button>
               ${i.showSource ? `<a class="gh-link" href="${esc(i.repoUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}
             </div>` : ''}
