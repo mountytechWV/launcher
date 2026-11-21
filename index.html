@@ -132,7 +132,7 @@ const CONFIG = {
 /* ============================================================ */
 
 const API = 'https://api.github.com';
-const CACHE_KEY = 'mt-launcher-cache-v1';
+const CACHE_KEY = 'mt-launcher-cache-v2';
 const $ = (id) => document.getElementById(id);
 const ownerLower = CONFIG.owner.toLowerCase();
 $('owner-name').textContent = CONFIG.owner;
@@ -213,7 +213,29 @@ function defaultPagesUrl(repo) {
     : `https://${ownerLower}.github.io/${repo.name}/`;
 }
 
+// Optional launcher.json in any repo: extra links (Vercel sites, etc.), a display name, pages to hide.
+// Read from raw.githubusercontent.com, so it doesn't count against the GitHub API limit.
+async function readRepoLauncherFile(repo) {
+  try {
+    const r = await fetch(`https://raw.githubusercontent.com/${repo.full_name}/${encodeURIComponent(repo.default_branch)}/launcher.json`, { cache: 'no-cache' });
+    if (!r.ok) return {};
+    const j = await r.json();
+    return Array.isArray(j) ? { links: j } : (j && typeof j === 'object' ? j : {});
+  } catch { return {}; }
+}
+
 async function scanRepo(repo) {
+  const extra = await readRepoLauncherFile(repo);
+  const result = await scanRepoPages(repo);
+  result.displayName = typeof extra.name === 'string' ? extra.name : '';
+  result.links = (Array.isArray(extra.links) ? extra.links : [])
+    .filter(l => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url));
+  const hide = Array.isArray(extra.hide) ? extra.hide.map(h => String(h).replace(/^\/+/, '').toLowerCase()) : [];
+  if (hide.length) result.pages = result.pages.filter(p => !hide.includes(p.path.replace(/^\/+/, '').toLowerCase()));
+  return result;
+}
+
+async function scanRepoPages(repo) {
   const result = {
     name: repo.name,
     description: repo.description || '',
@@ -342,7 +364,7 @@ function pageRow(p) {
 }
 
 function render(apps) {
-  const withSites = apps.filter(a => a.hasPages || (a.homepage && /^https?:/i.test(a.homepage)));
+  const withSites = apps.filter(a => a.hasPages || (a.homepage && /^https?:/i.test(a.homepage)) || (a.links && a.links.length));
   const others = apps.filter(a => !withSites.includes(a));
 
   const grid = $('grid');
@@ -351,17 +373,24 @@ function render(apps) {
   } else {
     grid.innerHTML = withSites.map(a => {
       let pages = a.pages.slice();
-      if (!a.hasPages && a.homepage) {
+      const same = (x, y) => x.replace(/\/+$/, '').toLowerCase() === y.replace(/\/+$/, '').toLowerCase();
+      const hasHome = a.homepage && /^https?:/i.test(a.homepage);
+      if (!a.hasPages && hasHome) {
         pages = [{ path: a.homepage, url: a.homepage, isMain: true, label: 'Main app', title: '' }];
-      } else if (a.homepage && /^https?:/i.test(a.homepage) && !pages.some(p => p.url.replace(/\/$/, '') === a.homepage.replace(/\/$/, ''))) {
+      } else if (hasHome && !pages.some(p => same(p.url, a.homepage))) {
         pages.push({ path: a.homepage, url: a.homepage, isMain: false, label: 'Homepage', title: '' });
       }
-      const search = (a.name + ' ' + pretty(a.name) + ' ' + a.description).toLowerCase();
+      (a.links || []).forEach(l => {
+        if (pages.some(p => same(p.url, l.url))) return;
+        pages.push({ path: l.note || l.url, url: l.url, isMain: !!l.main, label: l.name || l.url, title: '' });
+      });
+      const title = a.displayName || pretty(a.name);
+      const search = (a.name + ' ' + title + ' ' + a.description).toLowerCase();
       return `
         <section class="card" data-search="${esc(search)}">
           <div class="card-head">
             <div>
-              <h3 class="card-title">${esc(pretty(a.name))}</h3>
+              <h3 class="card-title">${esc(title)}</h3>
               <div class="card-sub">${pages.length} page${pages.length === 1 ? '' : 's'} · updated ${esc(timeAgo(a.pushed))}</div>
             </div>
             <a class="gh-link" href="${esc(a.repoUrl)}" target="_blank" rel="noopener">GitHub ↗</a>

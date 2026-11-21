@@ -29,9 +29,32 @@ At the top of the script in `index.html` there's a `CONFIG` block:
 - `cacheMinutes` – how often it re-checks GitHub (default 30)
 - `showOtherRepos` – show or hide the "Repos without a website" list
 
+## Apps hosted on Vercel (or anywhere outside GitHub Pages)
+
+GitHub doesn't know the web addresses of your Vercel sites, so the launcher can't find those on its own. To add them, put a `launcher.json` file in the root of **that app's repo** (not this one):
+
+```json
+{
+  "name": "MT Economic Calendar",
+  "links": [
+    { "name": "LE Trading Academy version", "url": "https://....vercel.app", "note": "short note" },
+    { "name": "Kingdom Traders version", "url": "https://....vercel.app" }
+  ],
+  "hide": ["test.html"]
+}
+```
+
+- `name` (optional) – the card title
+- `links` – extra links shown on that app's card. Add `"main": true` to tag one as the main link.
+- `hide` (optional) – page paths to leave off the card
+
+The launcher reads this file automatically. You don't need to change anything in the launcher repo.
+
+Also set each repo's **Website** field (gear icon next to "About" on the repo page) to its main Vercel URL. The launcher picks that up as well.
+
 ## Extra links (optional)
 
-For anything not on GitHub Pages, add it to `links.json`:
+For anything that doesn't belong to one of your repos, add it to `links.json` in this launcher repo:
 
 ```json
 [
